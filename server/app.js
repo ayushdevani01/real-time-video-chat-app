@@ -26,7 +26,7 @@ io.on("connection", (socket) => {
     if (!users[room]) {
       users[room] = [];
     }
-    
+
     socket.emit("existing-users", users[room]);
     users[room].push({ id: socket.id, username });
 
@@ -36,12 +36,12 @@ io.on("connection", (socket) => {
 
 
   socket.on("message", ({ room, message, username }) => {
-    io.broadcast.to(room).emit("receiveMessage", { message, username, id: socket.id });
+    socket.to(room).emit("receiveMessage", { message, username, id: socket.id });
   });
 
-  socket.on("webrtc-offer", ({ offer, to }) => {
-    io.to(to).emit("webrtc-offer", { offer, from: socket.id });
-  });
+  socket.on("webrtc-offer", ({ offer, to, username }) => {
+    io.to(to).emit("webrtc-offer", { offer, from: socket.id, username });
+});
 
   socket.on("webrtc-answer", ({ answer, to }) => {
     io.to(to).emit("webrtc-answer", { answer, from: socket.id });

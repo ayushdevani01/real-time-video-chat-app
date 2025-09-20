@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from "socket.io-client";
-import { Box, Grid, Snackbar, Alert, Typography, TextField, Button, List, ListItem, ListItemText } from "@mui/material";
+import { Box, Grid, Snackbar, Alert, Typography, TextField, Button, List, ListItem, ListItemText, LinearProgress } from "@mui/material";
 import Lobby from './Lobby';
 import VideoPlayer from './VideoPlayer';
 
@@ -13,6 +13,7 @@ const App = () => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const peerConnections = useRef({});
+  const [progress, setProgress] = useState(100);
 
   useEffect(() => {
     const initMedia = async () => {
@@ -26,14 +27,31 @@ const App = () => {
     initMedia();
   }, []);
 
-  
+  useEffect(() => {
+    if (notification.open) {
+      setProgress(100);
+      const timer = setInterval(() => {
+        setProgress((prevProgress) => {
+          if (prevProgress <= 0) {
+            clearInterval(timer);
+            return 0;
+          }
+          return prevProgress - 5; // Adjusted for 2-second duration
+        });
+      }, 100);
+
+      return () => {
+        clearInterval(timer);
+      };
+    }
+  }, [notification.open]);
+
   useEffect(() => {
     if (!socket || !myStream || !user) return;
 
     const createPeerConnection = (socketID, username) => {
-      if (peerConnections.current[socketID]) {
-        return;
-      }
+      if (peerConnections.current[socketID]) return;
+      
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }],
       });
@@ -57,21 +75,19 @@ const App = () => {
       const pc = peerConnections.current[socketID];
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      socket.emit("webrtc-offer", { offer, to: socketID });
+      socket.emit("webrtc-offer", { offer, to: socketID, username: user.username });
     };
 
     const handleExistingUsers = (users) => {
       users.forEach(u => callUser(u.id, u.username));
     };
     
-    const handleUserJoined = ({ id, username }) => {
+    const handleUserJoined = ({ username }) => {
         setNotification({ open: true, message: `${username} joined the room.` });
     };
 
-    const handleWebrtcOffer = async ({ offer, from }) => {
-      // Find username of the offerer
-      // This is a simplification; a more robust solution would pass the username with the offer
-      createPeerConnection(from, 'A new user'); // Placeholder username
+    const handleWebrtcOffer = async ({ offer, from, username }) => {
+      createPeerConnection(from, username);
       const pc = peerConnections.current[from];
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
       const answer = await pc.createAnswer();
@@ -100,7 +116,6 @@ const App = () => {
       }
       setRemoteStreams(prev => {
         const newStreams = { ...prev };
-        // Get username before deleting for notification
         const username = newStreams[socketID]?.username || 'A user';
         delete newStreams[socketID];
         setNotification({ open: true, message: `${username} left the room.` });
@@ -155,62 +170,140 @@ const App = () => {
   }
 
   return (
-    <Box sx={{ display: 'flex', height: '100vh', p: 2, boxSizing: 'border-box' }}>
-      <Grid container spacing={2}>
-        <Grid item xs={9}>
-          <Grid container spacing={2}>
-            <Grid item xs={6} md={4}>
-              {myStream && <VideoPlayer stream={myStream} isMuted={true} username={`${user.username} (You)`} />}
-            </Grid>
-            {Object.entries(remoteStreams).map(([socketID, data]) => (
-              <Grid item xs={6} md={4} key={socketID}>
-                {data.stream && <VideoPlayer stream={data.stream} username={data.username} />}
-              </Grid>
-            ))}
-          </Grid>
-        </Grid>
-        <Grid item xs={3}>
-          <Box sx={{
-            height: '100%', display: 'flex', flexDirection: 'column',
-            border: '1px solid #ddd', borderRadius: '8px', p: 2
-          }}>
-            <Typography variant="h6" gutterBottom>Chat</Typography>
-            <Box sx={{ flexGrow: 1, overflowY: 'auto', mb: 2 }}>
-              <List>
-                {messages.map((msg, index) => (
-                  <ListItem key={index} alignItems="flex-start">
-                    <ListItemText
-                      primary={msg.username}
-                      secondary={msg.message}
-                    />
-                  </ListItem>
-                ))}
-              </List>
-            </Box>
-            <Box component="form" onSubmit={handleSendMessage} sx={{ display: 'flex' }}>
-              <TextField
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                label="Message"
-                fullWidth
-                size="small"
-              />
-              <Button type="submit" variant="contained" sx={{ ml: 1 }}>Send</Button>
-            </Box>
+    <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+  {/* Video Section */}
+  <Box sx={{ flexGrow: 1, p: 1, overflowY: 'auto' }}>
+    <Grid container spacing={2}>
+      {/* My video */}
+      <Grid item >
+        {myStream && (
+          <Box sx={{width:450, height:310}}>
+            <VideoPlayer
+            stream={myStream}
+            isMuted={true}
+            username={`${user.username} (You)`}
+          />
           </Box>
-        </Grid>
+          
+        )}
       </Grid>
-      <Snackbar
-        open={notification.open}
-        autoHideDuration={4000}
-        onClose={handleCloseNotification}
-        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
-      >
-        <Alert onClose={handleCloseNotification} severity="info" sx={{ width: '100%' }}>
-          {notification.message}
-        </Alert>
-      </Snackbar>
+
+      {/* Remote videos */}
+      {Object.entries(remoteStreams).map(([socketID, data]) => (
+        <Grid item key={socketID}>
+          {data.stream && (
+            <Box sx={{ width: 450, height: 310 }}>
+              <VideoPlayer stream={data.stream} username={data.username} />
+            </Box>
+          )}
+        </Grid>
+      ))}
+    </Grid>
+  </Box>
+
+  {/* Chat Section */}
+  <Box
+    sx={{
+      width: '20%',
+      display: 'flex',
+      flexDirection: 'column',
+      borderLeft: '1px solid #ddd',
+      bgcolor: 'white',
+    }}
+  >
+    {/* Header */}
+    <Typography
+      variant="h6"
+      gutterBottom
+      sx={{ p: 2, flexShrink: 0, borderBottom: '1px solid #eee' }}
+    >
+      Chat
+    </Typography>
+
+    {/* Messages List */}
+    <Box
+      sx={{
+        flexGrow: 1,
+        overflowY: 'auto',
+        px: 2,
+        py: 1,
+      }}
+    >
+      <List>
+        {messages.map((msg, index) => (
+          <ListItem
+            key={index}
+            sx={{
+              bgcolor: index % 2 ? '#f5f5f5' : 'transparent',
+              borderRadius: '8px',
+              mb: 1,
+              p: 1,
+            }}
+          >
+            <ListItemText
+              primary={
+                <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
+                  {msg.username}
+                </Typography>
+              }
+              secondary={msg.message}
+            />
+          </ListItem>
+        ))}
+      </List>
     </Box>
+
+    {/* Input */}
+    <Box
+      component="form"
+      onSubmit={handleSendMessage}
+      sx={{
+        display: 'flex',
+        p: 2,
+        borderTop: '1px solid #e2e2e2ff',
+        flexShrink: 0,
+      }}
+    >
+      <TextField
+        value={newMessage}
+        onChange={(e) => setNewMessage(e.target.value)}
+        label="Message"
+        fullWidth
+        size="small"
+        variant="outlined"
+      />
+      <Button type="submit" variant="contained" sx={{ ml: 1 }}>
+        Send
+      </Button>
+    </Box>
+  </Box>
+  {/* Snackbar for Notifications */}
+<Snackbar
+    open={notification.open}
+    autoHideDuration={2000}
+    onClose={handleCloseNotification}
+    anchorOrigin={{ vertical: "top", horizontal: "right" }}
+>
+    <Alert
+      onClose={handleCloseNotification}
+      severity="info"
+      sx={{ width: "100%", position: "relative" }}
+    >
+      {notification.message}
+      <LinearProgress
+        variant="determinate"
+        value={progress}
+        sx={{ 
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0
+        }}
+      />
+    </Alert>
+</Snackbar>
+</Box>
+
   );
 };
 
